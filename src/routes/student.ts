@@ -11,7 +11,7 @@ router.get("/results", requireAuth, async (req: any, res) => {
     const user = req.user;
 
     const results = await neonQuery(
-      `SELECT ta.id, ta.exam_id, ta.score, ta.total_marks, ta.percentage, ta.time_taken_seconds, ta.submitted_at,
+      `SELECT ta.id, ta.exam_id, ta.score, ta.total_marks, ta.percentage, ta.time_taken_seconds, ta.submitted_at, ta.answers,
               e.title, e.exam_type, e.question_mode
        FROM public.test_attempts ta
        LEFT JOIN public.exams e ON ta.exam_id = e.id
@@ -29,6 +29,7 @@ router.get("/results", requireAuth, async (req: any, res) => {
       percentage: r.percentage,
       time_taken_seconds: r.time_taken_seconds,
       submitted_at: r.submitted_at,
+      answers: r.answers || {},
       exams: { title: r.title, exam_type: r.exam_type, question_mode: r.question_mode },
     }));
 
@@ -149,22 +150,51 @@ router.get("/tests/:id", requireAuth, async (req: any, res) => {
       .eq("exam_id", id)
       .order("order_index", { ascending: true });
 
-    // Fetch languages available
+    // Fetch languages available (from both exam settings and any existing translations)
+    const codeToLang: Record<string, string> = {
+      hi: "hindi",
+      mr: "marathi",
+      gu: "gujarati",
+      ta: "tamil",
+      te: "telugu",
+      kn: "kannada",
+      en: "english",
+    };
+
+    let examConfiguredLangs: string[] = [];
+    try {
+      const parsed = JSON.parse(exam?.description || "");
+      if (parsed && Array.isArray(parsed.languages)) {
+        examConfiguredLangs = parsed.languages;
+      }
+    } catch {
+      // plain text description
+    }
+
     const questionIds = (questions || []).map((q: any) => q.id);
-    let availableLanguages: string[] = [];
+    let dbTranslationLangs: string[] = [];
     if (questionIds.length > 0) {
       const { data: translationRows } = await db
         .from("question_translations")
         .select("language")
         .in("question_id", questionIds);
       if (translationRows) {
-        availableLanguages = [...new Set(translationRows.map((r: any) => r.language))] as string[];
+        dbTranslationLangs = translationRows.map((r: any) => r.language);
       }
     }
 
+    const allLangs = [...examConfiguredLangs, ...dbTranslationLangs];
+    const availableLanguages = Array.from(
+      new Set(
+        allLangs
+          .map((l) => (codeToLang[String(l).toLowerCase()] || String(l)).toLowerCase())
+          .filter((l) => l !== "english" && l !== "en")
+      )
+    );
+
     // Fetch previous attempt
     const prevAttempts = await neonQuery(
-      `SELECT score, total_marks, percentage FROM public.test_attempts
+      `SELECT score, total_marks, percentage, answers, time_taken_seconds FROM public.test_attempts
        WHERE exam_id = $1 AND student_id = $2 AND status = 'submitted'
        ORDER BY submitted_at DESC LIMIT 1;`,
       [id, user.id]
