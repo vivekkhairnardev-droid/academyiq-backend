@@ -221,7 +221,7 @@ router.patch("/profile", requireAuth, requireInstitute, async (req: any, res) =>
   }
 });
 
-// GET /api/institute/questions — List questions created by this institute
+// GET /api/institute/questions — List questions from tests created by this institute or assigned to it
 router.get("/questions", requireAuth, requireInstitute, async (req: any, res) => {
   try {
     const user = req.user;
@@ -246,13 +246,34 @@ router.get("/questions", requireAuth, requireInstitute, async (req: any, res) =>
       LEFT JOIN public.subjects s ON q.subject_id = s.id
       LEFT JOIN public.subject_topics st ON q.topic_id = st.id
       WHERE e.created_by = $1
+         OR (
+           e.id IN (
+             SELECT ea.exam_id 
+             FROM public.exam_assignments ea 
+             WHERE ea.institute_id = $1 AND ea.assigned_by != $1
+           )
+           AND e.status = 'published'
+         )
       ORDER BY q.created_at DESC;
     `;
     const questions = await neonQuery(sql, [user.id]);
 
-    // Fetch subjects and topics
+    // Fetch subjects and topics for this institute's tests
     const subjects = await neonQuery(
-      `SELECT s.id, s.name, s.exam_id FROM public.subjects s ORDER BY s.name ASC;`
+      `SELECT DISTINCT s.id, s.name, s.exam_id 
+       FROM public.subjects s
+       JOIN public.exams e ON s.exam_id = e.id
+       WHERE e.created_by = $1
+          OR (
+            e.id IN (
+              SELECT ea.exam_id 
+              FROM public.exam_assignments ea 
+              WHERE ea.institute_id = $1 AND ea.assigned_by != $1
+            )
+            AND e.status = 'published'
+          )
+       ORDER BY s.name ASC;`,
+      [user.id]
     );
     const topics = await neonQuery(
       `SELECT id, subject_id, title FROM public.subject_topics ORDER BY title ASC;`
@@ -261,6 +282,94 @@ router.get("/questions", requireAuth, requireInstitute, async (req: any, res) =>
     return res.json({ questions, subjects, topics });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || "An error occurred." });
+  }
+});
+
+// GET /api/institute/search — Search across tests, students, and questions for command palette
+router.get("/search", requireAuth, requireInstitute, async (req: any, res) => {
+  try {
+    const user = req.user;
+    const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const searchPattern = query ? `%${query}%` : "%";
+
+    // 1. Tests search
+    const testsSql = `
+      SELECT 
+        e.id, 
+        e.title, 
+        e.exam_type, 
+        e.duration_minutes, 
+        e.total_marks, 
+        e.status,
+        e.created_by,
+        COUNT(q.id)::int as question_count
+      FROM public.exams e
+      LEFT JOIN public.questions q ON e.id = q.exam_id
+      WHERE (
+        e.created_by = $1
+        OR (
+          e.id IN (
+            SELECT ea.exam_id 
+            FROM public.exam_assignments ea 
+            WHERE ea.institute_id = $1 AND ea.assigned_by != $1
+          )
+          AND e.status = 'published'
+        )
+      )
+      AND ($2 = '%' OR e.title ILIKE $2)
+      GROUP BY e.id
+      ORDER BY e.created_at DESC
+      LIMIT 8;
+    `;
+    const tests = await neonQuery(testsSql, [user.id, searchPattern]);
+
+    // 2. Students search
+    const studentsSql = `
+      SELECT 
+        p.id, 
+        p.full_name, 
+        p.email, 
+        p.phone
+      FROM public.profiles_with_roles p
+      WHERE p.role_name = 'student'
+        AND p.institute_id = $1
+        AND ($2 = '%' OR p.full_name ILIKE $2 OR p.email ILIKE $2 OR (p.phone IS NOT NULL AND p.phone ILIKE $2))
+      ORDER BY p.full_name ASC
+      LIMIT 8;
+    `;
+    const students = await neonQuery(studentsSql, [user.id, searchPattern]);
+
+    // 3. Questions search
+    const questionsSql = `
+      SELECT 
+        q.id, 
+        q.exam_id, 
+        q.question_text, 
+        q.question_type, 
+        q.marks, 
+        e.title as exam_title
+      FROM public.questions q
+      JOIN public.exams e ON q.exam_id = e.id
+      WHERE (
+        e.created_by = $1
+        OR (
+          e.id IN (
+            SELECT ea.exam_id 
+            FROM public.exam_assignments ea 
+            WHERE ea.institute_id = $1 AND ea.assigned_by != $1
+          )
+          AND e.status = 'published'
+        )
+      )
+      AND ($2 = '%' OR q.question_text ILIKE $2)
+      ORDER BY q.created_at DESC
+      LIMIT 8;
+    `;
+    const questions = await neonQuery(questionsSql, [user.id, searchPattern]);
+
+    return res.json({ tests: tests || [], students: students || [], questions: questions || [] });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "An error occurred during search." });
   }
 });
 
