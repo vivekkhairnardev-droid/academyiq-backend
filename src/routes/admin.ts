@@ -55,12 +55,13 @@ router.post("/settings", requireAuth, requireSuperAdmin, async (req: any, res) =
   }
 });
 
-// GET /api/admin/users — list all users (admin only)
+// GET /api/admin/users — list all users (admin only, excluding super_admin)
 router.get("/users", requireAuth, requireSuperAdmin, async (req: any, res) => {
   try {
     const { data: users, error } = await db
       .from("profiles_with_roles")
       .select("*")
+      .neq("role_name", "super_admin")
       .order("created_at", { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });
