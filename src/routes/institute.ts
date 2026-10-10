@@ -164,12 +164,34 @@ router.get("/assigned-tests", requireAuth, requireInstitute, async (req: any, re
     const user = req.user;
 
     const rows = await neonQuery(
-      `SELECT e.id, e.title, e.description, e.exam_type, e.question_mode,
-              e.duration_minutes, e.total_marks, e.is_paid, e.price, e.status,
-              e.created_at, e.created_by, ea.assigned_by
+      `SELECT 
+        e.id, 
+        e.title, 
+        e.description, 
+        e.category_id,
+        e.exam_type, 
+        e.question_mode,
+        e.duration_minutes, 
+        e.total_marks, 
+        e.is_paid, 
+        e.price, 
+        e.status,
+        e.created_by, 
+        e.created_at, 
+        e.updated_at,
+        e.creator_name,
+        e.creator_email,
+        e.creator_role,
+        e.category_name,
+        e.question_count,
+        ea.assigned_by,
+        ea.assigned_at
        FROM public.exam_assignments ea
-       JOIN public.exams e ON ea.exam_id = e.id
-       WHERE ea.institute_id = $1 AND ea.assigned_by != $1 AND e.status = 'published';`,
+       JOIN public.exams_with_creator e ON ea.exam_id = e.id
+       WHERE ea.institute_id = $1 
+         AND (ea.assigned_by IS NULL OR ea.assigned_by != $1)
+         AND e.created_by != $1
+       ORDER BY ea.assigned_at DESC NULLS LAST, e.created_at DESC;`,
       [user.id]
     );
 
@@ -246,13 +268,10 @@ router.get("/questions", requireAuth, requireInstitute, async (req: any, res) =>
       LEFT JOIN public.subjects s ON q.subject_id = s.id
       LEFT JOIN public.subject_topics st ON q.topic_id = st.id
       WHERE e.created_by = $1
-         OR (
-           e.id IN (
-             SELECT ea.exam_id 
-             FROM public.exam_assignments ea 
-             WHERE ea.institute_id = $1 AND ea.assigned_by != $1
-           )
-           AND e.status = 'published'
+         OR e.id IN (
+           SELECT ea.exam_id 
+           FROM public.exam_assignments ea 
+           WHERE ea.institute_id = $1 AND (ea.assigned_by IS NULL OR ea.assigned_by != $1)
          )
       ORDER BY q.created_at DESC;
     `;
@@ -264,13 +283,10 @@ router.get("/questions", requireAuth, requireInstitute, async (req: any, res) =>
        FROM public.subjects s
        JOIN public.exams e ON s.exam_id = e.id
        WHERE e.created_by = $1
-          OR (
-            e.id IN (
-              SELECT ea.exam_id 
-              FROM public.exam_assignments ea 
-              WHERE ea.institute_id = $1 AND ea.assigned_by != $1
-            )
-            AND e.status = 'published'
+          OR e.id IN (
+            SELECT ea.exam_id 
+            FROM public.exam_assignments ea 
+            WHERE ea.institute_id = $1 AND (ea.assigned_by IS NULL OR ea.assigned_by != $1)
           )
        ORDER BY s.name ASC;`,
       [user.id]
@@ -307,13 +323,10 @@ router.get("/search", requireAuth, requireInstitute, async (req: any, res) => {
       LEFT JOIN public.questions q ON e.id = q.exam_id
       WHERE (
         e.created_by = $1
-        OR (
-          e.id IN (
-            SELECT ea.exam_id 
-            FROM public.exam_assignments ea 
-            WHERE ea.institute_id = $1 AND ea.assigned_by != $1
-          )
-          AND e.status = 'published'
+        OR e.id IN (
+          SELECT ea.exam_id 
+          FROM public.exam_assignments ea 
+          WHERE ea.institute_id = $1 AND (ea.assigned_by IS NULL OR ea.assigned_by != $1)
         )
       )
       AND ($2 = '%' OR e.title ILIKE $2)
@@ -352,13 +365,10 @@ router.get("/search", requireAuth, requireInstitute, async (req: any, res) => {
       JOIN public.exams e ON q.exam_id = e.id
       WHERE (
         e.created_by = $1
-        OR (
-          e.id IN (
-            SELECT ea.exam_id 
-            FROM public.exam_assignments ea 
-            WHERE ea.institute_id = $1 AND ea.assigned_by != $1
-          )
-          AND e.status = 'published'
+        OR e.id IN (
+          SELECT ea.exam_id 
+          FROM public.exam_assignments ea 
+          WHERE ea.institute_id = $1 AND (ea.assigned_by IS NULL OR ea.assigned_by != $1)
         )
       )
       AND ($2 = '%' OR q.question_text ILIKE $2)

@@ -268,6 +268,7 @@ router.post("/assign-tests", requireAuth, requireSuperAdmin, async (req: any, re
       exam_id: examId,
       institute_id: instId,
       assigned_by: req.user.id,
+      assigned_at: new Date().toISOString(),
     }));
 
     if (rows.length > 0) {
@@ -287,17 +288,21 @@ router.post("/assign-tests", requireAuth, requireSuperAdmin, async (req: any, re
 // DELETE /api/admin/assign-tests
 router.delete("/assign-tests", requireAuth, requireSuperAdmin, async (req: any, res) => {
   try {
-    const { examId, instituteId } = req.body;
+    const { examId, instituteId, instituteIds } = req.body;
 
-    if (!examId || !instituteId) {
-      return res.status(400).json({ error: "examId and instituteId are required in body" });
+    if (!examId || (!instituteId && (!Array.isArray(instituteIds) || instituteIds.length === 0))) {
+      return res.status(400).json({ error: "examId and instituteId (or instituteIds array) are required in body" });
     }
 
-    const { error } = await db
-      .from("exam_assignments")
-      .delete()
-      .eq("exam_id", examId)
-      .eq("institute_id", instituteId);
+    let deleteQuery = db.from("exam_assignments").delete().eq("exam_id", examId);
+
+    if (Array.isArray(instituteIds) && instituteIds.length > 0) {
+      deleteQuery = deleteQuery.in("institute_id", instituteIds);
+    } else {
+      deleteQuery = deleteQuery.eq("institute_id", instituteId);
+    }
+
+    const { error } = await deleteQuery;
 
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ message: "Assignment removed" });

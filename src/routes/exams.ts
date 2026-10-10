@@ -132,6 +132,19 @@ router.put("/:id", requireAuth, async (req: any, res) => {
     const { id } = req.params;
     const body = req.body;
 
+    const { data: currentExam } = await db.from("exams").select("created_by").eq("id", id).single();
+    if (!currentExam) return res.status(404).json({ error: "Exam not found" });
+
+    let userRole = req.user.role;
+    if (!userRole) {
+      const { data: p } = await db.from("profiles_with_roles").select("role_name").eq("id", req.user.id).single();
+      userRole = p?.role_name;
+    }
+    const isAdmin = userRole === "super_admin" || userRole === "admin";
+    if (!isAdmin && currentExam.created_by !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden: You cannot modify a test created by another user" });
+    }
+
     const { data: exam, error } = await db
       .from("exams")
       .update({ ...body, updated_at: new Date().toISOString() })
@@ -150,6 +163,19 @@ router.put("/:id", requireAuth, async (req: any, res) => {
 router.delete("/:id", requireAuth, async (req: any, res) => {
   try {
     const { id } = req.params;
+
+    const { data: currentExam } = await db.from("exams").select("created_by").eq("id", id).single();
+    if (!currentExam) return res.status(404).json({ error: "Exam not found" });
+
+    let userRole = req.user.role;
+    if (!userRole) {
+      const { data: p } = await db.from("profiles_with_roles").select("role_name").eq("id", req.user.id).single();
+      userRole = p?.role_name;
+    }
+    const isAdmin = userRole === "super_admin" || userRole === "admin";
+    if (!isAdmin && currentExam.created_by !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden: You cannot delete a test created by another user" });
+    }
 
     const { error } = await db.from("exams").delete().eq("id", id);
 
